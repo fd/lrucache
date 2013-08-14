@@ -22,15 +22,17 @@ package lrucache
 
 import (
 	"errors"
+
+	"github.com/fd/go-cas/blocks"
 )
 
 // Process operations concurrently except for those with an identical key.
 func nocondupesMainloop(f OnMissHandler, opchan chan reqGet) {
 	// Push result of call to wrapped function down this channel
-	waiting := map[string]chan replyGet{}
+	waiting := map[blocks.Addr]chan replyGet{}
 	type fullReply struct {
 		replyGet
-		id string
+		id blocks.Addr
 	}
 	donechan := make(chan fullReply)
 	for donechan != nil {
@@ -93,7 +95,7 @@ func NoConcurrentDupes(f OnMissHandler) (OnMissHandler, chan<- bool) {
 	opchan := make(chan reqGet)
 	go nocondupesMainloop(f, opchan)
 	quit := make(chan bool, 1)
-	wrap := func(key string) (Cacheable, error) {
+	wrap := func(key blocks.Addr) (Cacheable, error) {
 		if opchan == nil {
 			return nil, errClosed
 		}
@@ -116,7 +118,7 @@ func NoConcurrentDupes(f OnMissHandler) (OnMissHandler, chan<- bool) {
 // for wrapping OnMiss handlers.
 func ThrottleConcurrency(f OnMissHandler, maxconcurrent uint) OnMissHandler {
 	block := make(chan int, maxconcurrent)
-	return func(key string) (Cacheable, error) {
+	return func(key blocks.Addr) (Cacheable, error) {
 		block <- 58008
 		res, err := f(key)
 		<-block

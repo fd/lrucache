@@ -27,7 +27,7 @@
 // Then, optionally, define a type that implements some of the interfaces:
 //
 //      type cacheableInt int
-//      
+//
 //      func (i cacheableInt) OnPurge(why lrucache.PurgeReason) {
 //          fmt.Printf("Purging %d\n", i)
 //      }
@@ -61,14 +61,16 @@ package lrucache
 
 import (
 	"errors"
+
+	"github.com/fd/go-cas/blocks"
 )
 
-type OnMissHandler func(string) (Cacheable, error)
+type OnMissHandler func(blocks.Addr) (Cacheable, error)
 
 type Cache struct {
 	maxSize int64
 	size    int64
-	entries map[string]*cacheEntry
+	entries map[blocks.Addr]*cacheEntry
 	// Cache operations are pushed down this channel to the main cache loop
 	opChan           chan operation
 	lruHead, lruTail *cacheEntry
@@ -130,7 +132,7 @@ type NotifyPurge interface {
 type operation interface{}
 
 type reqSet struct {
-	id      string
+	id      blocks.Addr
 	payload Cacheable
 }
 
@@ -141,7 +143,7 @@ type replyGet struct {
 }
 
 type reqGet struct {
-	id string
+	id blocks.Addr
 	// If the key is found the value is pushed down this channel after which it
 	// is closed immediately. If the value is not found, OnMiss is called. If
 	// that does not work (OnMiss is not defined, or it returns nil) the
@@ -151,7 +153,7 @@ type reqGet struct {
 	reply chan<- replyGet
 }
 
-type reqDelete string
+type reqDelete blocks.Addr
 
 type reqOnMissFunc OnMissHandler
 
@@ -161,7 +163,7 @@ type reqGetSize chan<- int64
 
 type cacheEntry struct {
 	payload Cacheable
-	id      string
+	id      blocks.Addr
 	// Pointers for LRU cache
 	prev, next *cacheEntry
 }
@@ -238,7 +240,7 @@ func directSet(c *Cache, req reqSet) {
 
 // Not safe for use in concurrent goroutines
 func directDelete(c *Cache, req reqDelete) {
-	id := string(req)
+	id := blocks.Addr(req)
 	e, ok := c.entries[id]
 	if ok {
 		safeOnPurge(e.payload, EXPLICITDELETE)
@@ -291,7 +293,7 @@ func directGet(c *Cache, req reqGet) {
 func (c *Cache) Init(maxsize int64) {
 	c.maxSize = maxsize
 	c.opChan = make(chan operation)
-	c.entries = map[string]*cacheEntry{}
+	c.entries = map[blocks.Addr]*cacheEntry{}
 	go func() {
 		for op := range c.opChan {
 			switch req := op.(type) {
@@ -318,7 +320,7 @@ func (c *Cache) Init(maxsize int64) {
 }
 
 // Store this item in cache. Panics if the cacheable is nil.
-func (c *Cache) Set(id string, p Cacheable) {
+func (c *Cache) Set(id blocks.Addr, p Cacheable) {
 	if p == nil {
 		panic("Cacheable value must not be nil")
 	}
@@ -328,7 +330,7 @@ func (c *Cache) Set(id string, p Cacheable) {
 
 var ErrNotFound = errors.New("Key not found in cache")
 
-func (c *Cache) Get(id string) (Cacheable, error) {
+func (c *Cache) Get(id blocks.Addr) (Cacheable, error) {
 	replychan := make(chan replyGet)
 	req := reqGet{id: id, reply: replychan}
 	c.opChan <- req
@@ -336,7 +338,7 @@ func (c *Cache) Get(id string) (Cacheable, error) {
 	return reply.val, reply.err
 }
 
-func (c *Cache) Delete(id string) {
+func (c *Cache) Delete(id blocks.Addr) {
 	c.opChan <- reqDelete(id)
 }
 
@@ -384,18 +386,18 @@ func New(maxsize int64) *Cache {
 var sharedCache Cache
 
 // Get an element from the shared cache.
-func Get(id string) (Cacheable, error) {
+func Get(id blocks.Addr) (Cacheable, error) {
 	return sharedCache.Get(id)
 }
 
 // Put an object in the shared cache (requires no configuration).
-func Set(id string, c Cacheable) {
+func Set(id blocks.Addr, c Cacheable) {
 	sharedCache.Set(id, c)
 	return
 }
 
 // Delete an item from the shared cache.
-func Delete(id string) {
+func Delete(id blocks.Addr) {
 	sharedCache.Delete(id)
 	return
 }
